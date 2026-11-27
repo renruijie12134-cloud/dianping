@@ -30,18 +30,25 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     @Override
     public Result queryShopById(Long id) {
+        // 采用缓存空值的方法来防止缓存击穿
         String key = RedisConstants.CACHE_SHOP_KEY + id;
-        // 1.从Redis中查询店铺缓存
+        // 1.从Redis中查询店铺缓存 -- 可能获取到的是店铺信息，也可能是空值
         String shopJson = stringRedisTemplate.opsForValue().get(key);
-        // 2.如果存在，返回店铺信息
+        // 2.如果返回的是店铺，返回店铺信息
         if (StrUtil.isNotBlank(shopJson)) {
             Shop shop = JSONUtil.toBean(shopJson, Shop.class);
             return Result.ok(shopJson);
         }
-        // 3.如果不存在，从数据库中查询
+        // 如果返回的是空值，返回错误信息，这就是从数据库保存在Redis里的值：""  表示空字符串
+        if (shopJson != null) {
+            return Result.fail("店铺不存在");
+        }
+        // 3.现在可判断店铺在数据库中是否存在
         Shop shop = getById(id);
         // 4.数据库不存在，返回错误信息
         if (shop == null) {
+            // 缓存中不存在，数据库中也不存在，向缓存里放空值
+            stringRedisTemplate.opsForValue().set(key, "",  RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
             return Result.fail("店铺不存在");
         }
         // 5.数据库存在，返回店铺信息,并写入Redis,设置缓存时间为 30分钟
@@ -50,4 +57,19 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         return Result.ok(shop);
     }
 
+    @Override
+    public Result updateShop(Shop shop) {
+        Long id = shop.getId();
+        if (id == null) {
+            return Result.fail("店铺id不能为空");
+        }
+        // 创建redis的键
+        String key = RedisConstants.CACHE_SHOP_KEY + id;
+        // 1.更新数据库
+        updateById(shop);
+        // 2.删除Redis缓存
+        stringRedisTemplate.delete(key);
+        // 3.返回结果
+        return Result.ok();
+    }
 }
